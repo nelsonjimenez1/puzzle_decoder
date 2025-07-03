@@ -3,6 +3,7 @@ import aiohttp
 import random
 import time
 
+MAX_ID = 9223372036854775807
 PUZZLE_URL = "http://localhost:8080/fragment?id={}"
 TOTAL_REQUESTS = 500
 QUIET_PERIOD_MS = 100  # time with no new index to consider puzzle stable
@@ -35,7 +36,7 @@ async def puzzle_decoder():
     async with aiohttp.ClientSession() as session:
         tasks = [
             asyncio.create_task(
-                fetch_and_track(session, random.randint(1, 10**9), fragments, max_index_seen, index_event)
+                fetch_and_track(session, random.randint(1, MAX_ID), fragments, max_index_seen, index_event)
             )
             for _ in range(TOTAL_REQUESTS)
         ]
@@ -53,7 +54,7 @@ async def puzzle_decoder():
                     print(f"⚠️ Incomplete puzzle — launching {EXTRA_REQUESTS} additional tasks...")
                     new_tasks = [
                         asyncio.create_task(
-                            fetch_and_track(session, random.randint(1, 10**9), fragments, max_index_seen, index_event)
+                            fetch_and_track(session, random.randint(1, MAX_ID), fragments, max_index_seen, index_event)
                         )
                         for _ in range(EXTRA_REQUESTS)
                     ]
