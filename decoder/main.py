@@ -6,8 +6,9 @@ import time
 MAX_ID = 9223372036854775807
 PUZZLE_URL = "http://localhost:8080/fragment?id={}"
 TOTAL_REQUESTS = 500
-QUIET_PERIOD_MS = 100  # time with no new index to consider puzzle stable
-EXTRA_REQUESTS = 100   # new tasks to launch when all current ones are done but puzzle incomplete
+QUIET_PERIOD_MS = 50       # time with no new index to consider puzzle stable
+EXTRA_REQUESTS = 50         # number of requests launched in each prefetch round
+PREFETCH_INTERVAL_MS = 50  # how often to prefetch more requests
 
 async def fetch_and_track(session, id_, fragments, max_index_seen, index_event):
     try:
@@ -27,13 +28,26 @@ async def fetch_and_track(session, id_, fragments, max_index_seen, index_event):
             max_index_seen[0] = idx
         index_event.set()
 
+async def background_prefetcher(session, fragments, max_index_seen, index_event, task_list, stop_event):
+    while not stop_event.is_set():
+        await asyncio.sleep(PREFETCH_INTERVAL_MS / 1000)
+        new_tasks = [
+            asyncio.create_task(
+                fetch_and_track(session, random.randint(1, MAX_ID), fragments, max_index_seen, index_event)
+            )
+            for _ in range(EXTRA_REQUESTS)
+        ]
+        task_list.extend(new_tasks)
+
 async def puzzle_decoder():
     fragments = {}
     max_index_seen = [0]
     index_event = asyncio.Event()
+    stop_event = asyncio.Event()
     start_time = time.perf_counter()
 
     async with aiohttp.ClientSession() as session:
+        # Initial batch
         tasks = [
             asyncio.create_task(
                 fetch_and_track(session, random.randint(1, MAX_ID), fragments, max_index_seen, index_event)
@@ -41,27 +55,29 @@ async def puzzle_decoder():
             for _ in range(TOTAL_REQUESTS)
         ]
 
+        # Start background prefetcher
+        prefetch_task = asyncio.create_task(
+            background_prefetcher(session, fragments, max_index_seen, index_event, tasks, stop_event)
+        )
+
+        last_checked_max_index = -1
+        expected_indexes = set()
+
         while True:
             try:
                 await asyncio.wait_for(index_event.wait(), timeout=QUIET_PERIOD_MS / 1000)
                 index_event.clear()
             except asyncio.TimeoutError:
-                expected_indexes = set(range(max_index_seen[0] + 1))
-                if set(fragments.keys()) == expected_indexes:
-                    break  # puzzle is complete
-                # if all tasks are done, launch more
-                if all(task.done() for task in tasks):
-                    print(f"⚠️ Incomplete puzzle — launching {EXTRA_REQUESTS} additional tasks...")
-                    new_tasks = [
-                        asyncio.create_task(
-                            fetch_and_track(session, random.randint(1, MAX_ID), fragments, max_index_seen, index_event)
-                        )
-                        for _ in range(EXTRA_REQUESTS)
-                    ]
-                    tasks.extend(new_tasks)
-                # else: continue waiting
+                if max_index_seen[0] != last_checked_max_index:
+                    expected_indexes = set(range(max_index_seen[0] + 1))
+                    last_checked_max_index = max_index_seen[0]
 
-        # Cancel any remaining tasks
+                if set(fragments.keys()) == expected_indexes:
+                    break
+
+        stop_event.set()
+        prefetch_task.cancel()
+
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
