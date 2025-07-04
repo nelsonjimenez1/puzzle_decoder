@@ -108,7 +108,7 @@ This ensures both:
 ## ⏱️ Did the program complete in under 1 second?
 
 ✅ **Yes.**
-Typical runs complete in **400–600 milliseconds** with 500 concurrent tasks and 100ms quiet timeout.
+Typical runs complete in **600–800 milliseconds** with 500 concurrent tasks and 100ms quiet timeout.
 Tested across multiple runs using `time.perf_counter()` for accurate measurement.
 
 ---
